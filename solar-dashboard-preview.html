@@ -1,0 +1,1680 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SolarPulse | Solar & Grid Energy Monitoring Dashboard</title>
+  
+  <!-- Modern Typography (Plus Jakarta Sans for UI + JetBrains Mono for Telemetry) -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
+  <!-- React 18 & Babel Standalone -->
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <style>
+    :root {
+      --bg-page: #090E17;
+      --bg-card: #0F172A;
+      --bg-card-sub: #162036;
+      --border-color: #1E293B;
+      --border-color-hover: #334155;
+      --text-primary: #F8FAFC;
+      --text-secondary: #94A3B8;
+      --text-muted: #64748B;
+      --accent-grid: #0284C7;
+      --accent-grid-light: #38BDF8;
+      --accent-solar: #F59E0B;
+      --accent-solar-light: #FBBF24;
+      --accent-total: #8B5CF6;
+      --accent-total-light: #A78BFA;
+      --accent-uptime: #10B981;
+      --accent-uptime-light: #34D399;
+      --accent-outage: #F43F5E;
+      --accent-outage-light: #FB7185;
+      --shadow-card: 0 10px 25px -5px rgba(0, 0, 0, 0.4), 0 8px 10px -6px rgba(0, 0, 0, 0.4);
+      --font-ui: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+      --font-mono: 'JetBrains Mono', monospace;
+    }
+
+    body.light-theme {
+      --bg-page: #F1F5F9;
+      --bg-card: #FFFFFF;
+      --bg-card-sub: #F8FAFC;
+      --border-color: #E2E8F0;
+      --border-color-hover: #CBD5E1;
+      --text-primary: #0F172A;
+      --text-secondary: #475569;
+      --text-muted: #94A3B8;
+      --accent-grid: #0284C7;
+      --accent-grid-light: #0369A1;
+      --accent-solar: #D97706;
+      --accent-solar-light: #B45309;
+      --accent-total: #7C3AED;
+      --accent-total-light: #6D28D9;
+      --accent-uptime: #059669;
+      --accent-uptime-light: #047857;
+      --accent-outage: #E11D48;
+      --accent-outage-light: #BE123C;
+      --shadow-card: 0 8px 24px rgba(0, 0, 0, 0.05), 0 2px 6px rgba(0, 0, 0, 0.03);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: var(--bg-page);
+      color: var(--text-primary);
+      font-family: var(--font-ui);
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      transition: background-color 0.25s ease, color 0.25s ease;
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    /* Custom scrollbars */
+    ::-webkit-scrollbar {
+      width: 7px;
+      height: 7px;
+    }
+    ::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: var(--border-color);
+      border-radius: 4px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: var(--border-color-hover);
+    }
+
+    /* Interactive element transitions */
+    button, select {
+      font-family: inherit;
+    }
+
+    @keyframes pulseLive {
+      0% { opacity: 0.6; transform: scale(0.96); }
+      50% { opacity: 1; transform: scale(1.04); }
+      100% { opacity: 0.6; transform: scale(0.96); }
+    }
+    .pulse-dot {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background-color: #10B981;
+      animation: pulseLive 2s infinite ease-in-out;
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useMemo, useEffect, useCallback } = React;
+
+    /**
+     * Map backend API DailyEnergyMetric (from /api/solar/metrics/daily)
+     * to Dashboard unified record structure.
+     */
+    function mapApiMetricToDailyRecord(m) {
+      const [y, monthNum, d] = m.date.split('-').map(Number);
+      const dt = new Date(y, monthNum - 1, d);
+      const dayOfWeek = dt.toLocaleDateString('en-US', { weekday: 'short' });
+      const monthName = dt.toLocaleDateString('en-US', { month: 'short' });
+      const fullMonth = dt.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+      const formattedDate = `${dayOfWeek}, ${monthName} ${String(d).padStart(2, '0')}`;
+      const shortDate = `${monthName} ${String(d).padStart(2, '0')}`;
+      const dayLabel = `${dayOfWeek} ${d}`;
+      const monthKey = `${y}-${String(monthNum).padStart(2, '0')}`;
+
+      const gridConnectedHours = Math.round((m.gridUptimeHours || 0) * 10) / 10;
+      const gridOutageHours = Math.round((m.gridOutageHours ?? Math.max(0, 24.0 - gridConnectedHours)) * 10) / 10;
+      const totalTrackedHours = gridConnectedHours + gridOutageHours;
+      const gridAvailabilityPercentage = totalTrackedHours > 0 
+        ? Math.round((gridConnectedHours / totalTrackedHours) * 1000) / 10 
+        : 0;
+
+      const gridConsumptionKwh = Math.round((m.gridImportEnergyKwh || 0) * 100) / 100;
+      const solarConsumptionKwh = Math.round((m.pvGenerationEnergyKwh || 0) * 100) / 100;
+      const totalLoadKwh = Math.round((m.totalLoadEnergyKwh || 0) * 100) / 100;
+      const totalConsumptionKwh = totalLoadKwh > 0 ? totalLoadKwh : Math.round((gridConsumptionKwh + solarConsumptionKwh) * 100) / 100;
+
+      return {
+        date: m.date,
+        dayOfWeek,
+        formattedDate,
+        shortDate,
+        dayLabel,
+        monthKey,
+        monthLabel: fullMonth,
+        gridConnectedHours,
+        gridOutageHours,
+        gridAvailabilityPercentage,
+        gridConsumptionKwh,
+        solarConsumptionKwh,
+        totalConsumptionKwh,
+        solarGenerationKwh: solarConsumptionKwh,
+        isRealData: true,
+      };
+    }
+    // Live-only mode: all telemetry records are strictly retrieved from the database.
+    const RAW_ENERGY_DATASET = [];
+
+    /**
+     * Radial Gauge Component for Weekly Grid Availability Percentage
+     * Formula: [(Total Grid Hours in last 7 days) / 168 hours] * 100%
+     */
+    function WeeklyAvailabilityGauge({ gridHours7d, availabilityPct, isLight }) {
+      const radius = 68;
+      const strokeWidth = 12;
+      const center = 85;
+      
+      const totalArc = 260;
+      const circumference = 2 * Math.PI * radius;
+      const arcLength = (totalArc / 360) * circumference;
+      const progressLength = (Math.min(100, Math.max(0, availabilityPct)) / 100) * arcLength;
+
+      const gaugeColor = availabilityPct >= 80 
+        ? '#10B981' // Emerald
+        : availabilityPct >= 65 
+          ? '#F59E0B' // Amber
+          : '#F43F5E'; // Rose
+
+      return (
+        <div style={{
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          position: 'relative',
+          padding: '8px 0 0',
+        }}>
+          <svg width="170" height="150" viewBox="0 0 170 150">
+            <defs>
+              <linearGradient id="gaugeGrad" x1="0%" y1="100%" x2="100%" y2="0%">
+                <stop offset="0%" stopColor={gaugeColor} stopOpacity="0.8" />
+                <stop offset="100%" stopColor={gaugeColor} stopOpacity="1" />
+              </linearGradient>
+            </defs>
+
+            {/* Background Arc Track */}
+            <circle
+              cx={center}
+              cy={center}
+              r={radius}
+              fill="none"
+              stroke={isLight ? '#E2E8F0' : '#1E293B'}
+              strokeWidth={strokeWidth}
+              strokeDasharray={`${arcLength} ${circumference}`}
+              strokeDashoffset="0"
+              strokeLinecap="round"
+              transform={`rotate(140 ${center} ${center})`}
+            />
+
+            {/* Progress Arc */}
+            <circle
+              cx={center}
+              cy={center}
+              r={radius}
+              fill="none"
+              stroke="url(#gaugeGrad)"
+              strokeWidth={strokeWidth}
+              strokeDasharray={`${progressLength} ${circumference}`}
+              strokeDashoffset="0"
+              strokeLinecap="round"
+              transform={`rotate(140 ${center} ${center})`}
+              style={{ transition: 'stroke-dasharray 0.8s cubic-bezier(0.4, 0, 0.2, 1)' }}
+            />
+
+            {/* Center Percentage Value */}
+            <text
+              x={center}
+              y={center - 2}
+              textAnchor="middle"
+              fill={isLight ? '#0F172A' : '#F8FAFC'}
+              fontFamily="var(--font-mono)"
+              fontWeight="800"
+              fontSize="24"
+            >
+              {availabilityPct.toFixed(1)}%
+            </text>
+
+            <text
+              x={center}
+              y={center + 18}
+              textAnchor="middle"
+              fill={isLight ? '#64748B' : '#94A3B8'}
+              fontFamily="var(--font-ui)"
+              fontWeight="700"
+              fontSize="10"
+              letterSpacing="0.05em"
+            >
+              7-DAY UPTIME
+            </text>
+          </svg>
+
+          {/* Subtext info pill */}
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            width: '100%',
+            marginTop: '-6px',
+            padding: '0 4px',
+            fontSize: '11px',
+            fontFamily: 'var(--font-mono)',
+            color: isLight ? '#475569' : '#94A3B8',
+          }}>
+            <span><strong>{gridHours7d.toFixed(1)}</strong> / 168.0 hrs</span>
+            <span style={{
+              color: gaugeColor,
+              fontWeight: '700',
+              padding: '2px 6px',
+              backgroundColor: isLight ? (gaugeColor + '18') : (gaugeColor + '25'),
+              borderRadius: '4px',
+            }}>
+              {(168.0 - gridHours7d).toFixed(1)}h outage
+            </span>
+          </div>
+        </div>
+      );
+    }
+
+    /**
+     * MAIN APPLICATION COMPONENT
+     */
+    function EnergyDashboardApp() {
+      const [liveData, setLiveData] = useState([]);
+      const [apiStatus, setApiStatus] = useState('loading'); // 'online' | 'offline' | 'loading'
+      const [deviceInfo, setDeviceInfo] = useState(null);
+      const [selectedMonth, setSelectedMonth] = useState('all');
+      const [theme, setTheme] = useState('dark');
+      const [chart2Mode, setChart2Mode] = useState('stacked'); // 'stacked' | 'grouped'
+      const [isSyncing, setIsSyncing] = useState(false);
+      const [syncMessage, setSyncMessage] = useState(null);
+
+      const [visibleSeries, setVisibleSeries] = useState({
+        grid: true,
+        solar: true,
+        total: true,
+      });
+
+      const [hoveredPointChart1, setHoveredPointChart1] = useState(null);
+      const [hoveredPointChart2, setHoveredPointChart2] = useState(null);
+
+      const isLight = theme === 'light';
+
+      useEffect(() => {
+        if (isLight) {
+          document.body.classList.add('light-theme');
+        } else {
+          document.body.classList.remove('light-theme');
+        }
+      }, [isLight]);
+
+      const [apiBaseUrl, setApiBaseUrl] = useState('');
+
+      // Fetch live data from backend API with multi-origin fallback
+      const loadLiveData = useCallback(async () => {
+        setApiStatus('loading');
+        const candidateBases = [
+          '', // relative if running inside ASP.NET Core server
+          'https://localhost:7198',
+          'http://localhost:5031',
+          'http://127.0.0.1:5031'
+        ];
+
+        let fetchedList = null;
+        let successfulBase = '';
+
+        for (const base of candidateBases) {
+          try {
+            const url = `${base}/api/solar/metrics/daily`;
+            const res = await fetch(url, { cache: 'no-store' });
+            if (res.ok) {
+              const json = await res.json();
+              const list = Array.isArray(json) ? json : (json.value || []);
+              if (Array.isArray(list)) {
+                fetchedList = list;
+                successfulBase = base;
+                break;
+              }
+            }
+          } catch (e) {
+            // try next candidate
+          }
+        }
+
+        if (fetchedList) {
+          const mapped = fetchedList.map(mapApiMetricToDailyRecord);
+          setLiveData(mapped);
+          setApiStatus('online');
+          setApiBaseUrl(successfulBase);
+
+          try {
+            const sRes = await fetch(`${successfulBase}/api/solar/status`);
+            if (sRes.ok) {
+              const sJson = await sRes.json();
+              setDeviceInfo(sJson);
+            }
+          } catch (e) {}
+        } else {
+          setApiStatus('offline');
+        }
+      }, []);
+
+      useEffect(() => {
+        loadLiveData();
+      }, [loadLiveData]);
+
+      // Manual platform sync handler
+      const handleSyncNow = async () => {
+        setIsSyncing(true);
+        setSyncMessage(null);
+        try {
+          const res = await fetch(`${apiBaseUrl}/api/solar/sync-now`, { method: 'POST' });
+          if (res.ok) {
+            setSyncMessage("✅ Synchronized successfully from platform!");
+            await loadLiveData();
+          } else {
+            setSyncMessage("⚠️ Sync returned non-200. Check credentials.");
+          }
+        } catch (e) {
+          setSyncMessage("⚠️ Sync failed: Backend unreachable or offline.");
+        } finally {
+          setIsSyncing(false);
+          setTimeout(() => setSyncMessage(null), 5000);
+        }
+      };
+
+      // Current active dataset is strictly liveData from database
+      const activeDataset = useMemo(() => {
+        return liveData;
+      }, [liveData]);
+
+      // Month list
+      const availableMonths = useMemo(() => {
+        const map = new Map();
+        activeDataset.forEach(d => {
+          if (!map.has(d.monthKey)) {
+            map.set(d.monthKey, d.monthLabel);
+          }
+        });
+        const arr = Array.from(map.entries()).map(([k, label]) => {
+          const count = activeDataset.filter(d => d.monthKey === k).length;
+          return { key: k, label: `${label} (${count} Days)` };
+        });
+        if (map.size > 1) {
+          arr.push({ key: 'all', label: `All Recorded Months (${activeDataset.length} Days)` });
+        }
+        return arr;
+      }, [activeDataset]);
+
+      // Keep selectedMonth valid
+      useEffect(() => {
+        if (availableMonths.length > 0 && !availableMonths.some(m => m.key === selectedMonth)) {
+          setSelectedMonth(availableMonths[0].key);
+        }
+      }, [availableMonths, selectedMonth]);
+
+      // Filtered data based on month
+      const filteredData = useMemo(() => {
+        if (selectedMonth === 'all') return activeDataset;
+        return activeDataset.filter(d => d.monthKey === selectedMonth);
+      }, [activeDataset, selectedMonth]);
+
+      // 1. Weekly Grid Availability Gauge (rolling last 7 days of the selected view)
+      const weeklyGaugeMetrics = useMemo(() => {
+        const last7Days = filteredData.slice(-7);
+        const totalGridHours7d = last7Days.reduce((acc, d) => acc + d.gridConnectedHours, 0);
+        const availabilityPct = (totalGridHours7d / 168.0) * 100;
+        const totalOutageHours7d = 168.0 - totalGridHours7d;
+        return {
+          totalGridHours7d,
+          availabilityPct: Math.round(availabilityPct * 10) / 10,
+          totalOutageHours7d: Math.round(totalOutageHours7d * 10) / 10,
+        };
+      }, [filteredData]);
+
+      // 2. Monthly Consumption Overview
+      const monthlyOverview = useMemo(() => {
+        const totalGridKwh = filteredData.reduce((acc, d) => acc + d.gridConsumptionKwh, 0);
+        const totalSolarKwh = filteredData.reduce((acc, d) => acc + d.solarConsumptionKwh, 0);
+        const totalKwh = totalGridKwh + totalSolarKwh;
+        const avgDailyKwh = filteredData.length > 0 ? (totalKwh / filteredData.length) : 0;
+        const solarSharePct = totalKwh > 0 ? (totalSolarKwh / totalKwh) * 100 : 0;
+        const gridSharePct = totalKwh > 0 ? (totalGridKwh / totalKwh) * 100 : 0;
+
+        return {
+          totalGridKwh: Math.round(totalGridKwh * 10) / 10,
+          totalSolarKwh: Math.round(totalSolarKwh * 10) / 10,
+          totalKwh: Math.round(totalKwh * 10) / 10,
+          avgDailyKwh: Math.round(avgDailyKwh * 10) / 10,
+          solarSharePct: Math.round(solarSharePct * 10) / 10,
+          gridSharePct: Math.round(gridSharePct * 10) / 10,
+          daysCount: filteredData.length,
+        };
+      }, [filteredData]);
+
+      // Toggle series in Chart 2
+      const toggleSeries = (key) => {
+        setVisibleSeries(prev => ({
+          ...prev,
+          [key]: !prev[key],
+        }));
+      };
+
+      // Export CSV handler
+      const exportCsv = useCallback(() => {
+        const headers = ["Date", "DayOfWeek", "Month", "GridConnectedHours", "GridOutageHours", "GridAvailabilityPct", "GridConsumptionKwh", "SolarConsumptionKwh", "TotalConsumptionKwh"];
+        const rows = filteredData.map(d => [
+          d.date,
+          d.dayOfWeek,
+          d.monthKey,
+          d.gridConnectedHours,
+          d.gridOutageHours,
+          d.gridAvailabilityPercentage,
+          d.gridConsumptionKwh,
+          d.solarConsumptionKwh,
+          d.totalConsumptionKwh
+        ]);
+        const csvContent = "data:text/csv;charset=utf-8," + [headers.join(","), ...rows.map(e => e.join(","))].join("\n");
+        const encodedUri = encodeURI(csvContent);
+        const link = document.createElement("a");
+        link.setAttribute("href", encodedUri);
+        link.setAttribute("download", `energy_telemetry_${selectedMonth}.csv`);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      }, [filteredData, selectedMonth]);
+
+      // Chart 2 Max Value Calculation for Scaler
+      const chart2MaxY = useMemo(() => {
+        if (filteredData.length === 0) return 30;
+        const maxVal = Math.max(...filteredData.map(d => d.totalConsumptionKwh));
+        return Math.max(10, Math.ceil((maxVal * 1.25) / 5) * 5);
+      }, [filteredData]);
+
+      return (
+        <div style={{
+          minHeight: '100vh',
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          padding: '24px 20px 48px',
+          gap: '20px',
+        }}>
+          {/* TOP APP BAR */}
+          <header style={{
+            width: '100%',
+            maxWidth: '1320px',
+            display: 'flex',
+            flexWrap: 'wrap',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            padding: '16px 22px',
+            backgroundColor: 'var(--bg-card)',
+            border: '1px solid var(--border-color)',
+            borderRadius: '14px',
+            boxShadow: 'var(--shadow-card)',
+            gap: '16px',
+          }}>
+            {/* Title & Brand */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <div style={{
+                width: '40px',
+                height: '40px',
+                borderRadius: '10px',
+                background: 'linear-gradient(135deg, #0284C7 0%, #10B981 100%)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                color: '#FFFFFF',
+                boxShadow: '0 4px 12px rgba(2, 132, 199, 0.35)',
+              }}>
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
+                </svg>
+              </div>
+              <div>
+                <h1 style={{
+                  fontSize: '18px',
+                  fontWeight: '800',
+                  color: 'var(--text-primary)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                }}>
+                  SolarPulse Dynamics
+                  <span style={{
+                    fontSize: '11px',
+                    fontWeight: '700',
+                    color: 'var(--accent-uptime)',
+                    backgroundColor: 'rgba(16, 185, 129, 0.15)',
+                    border: '1px solid var(--accent-uptime)',
+                    padding: '2px 7px',
+                    borderRadius: '5px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                  }}>
+                    <span className="pulse-dot" style={{ backgroundColor: '#10B981' }} />
+                    LIVE DATABASE
+                  </span>
+                </h1>
+                <p style={{
+                  fontSize: '12px',
+                  color: 'var(--text-muted)',
+                  margin: '2px 0 0',
+                }}>
+                  Electricity & Solar Energy Monitoring Intelligence Console
+                </p>
+              </div>
+            </div>
+
+            {/* Controls: Live Status + Sync + Month Selector + Theme Toggle */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+              {/* Live Status Pill & Sync */}
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                backgroundColor: 'var(--bg-card-sub)',
+                padding: '4px 10px',
+                borderRadius: '8px',
+                border: '1px solid var(--border-color)',
+              }}>
+                <span style={{ fontSize: '11px', fontWeight: '700', color: 'var(--accent-uptime)' }}>
+                  🟢 {liveData.length} Days Recorded
+                </span>
+                <button
+                  onClick={handleSyncNow}
+                  disabled={isSyncing}
+                  style={{
+                    padding: '3px 8px',
+                    fontSize: '11px',
+                    fontWeight: '700',
+                    borderRadius: '5px',
+                    border: 'none',
+                    cursor: isSyncing ? 'wait' : 'pointer',
+                    backgroundColor: 'var(--accent-uptime)',
+                    color: '#FFFFFF',
+                    transition: 'all 0.15s ease',
+                  }}
+                  title="Synchronize fresh telemetry from solar platform"
+                >
+                  {isSyncing ? '⏳ Syncing...' : '🔄 Sync Now'}
+                </button>
+              </div>
+
+              {/* Month Selector Filter */}
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                backgroundColor: 'var(--bg-card-sub)',
+                padding: '4px 8px',
+                borderRadius: '8px',
+                border: '1px solid var(--border-color)',
+              }}>
+                <span style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-muted)' }}>
+                  📅 Month:
+                </span>
+                <select
+                  value={selectedMonth}
+                  onChange={(e) => setSelectedMonth(e.target.value)}
+                  style={{
+                    backgroundColor: 'transparent',
+                    color: 'var(--text-primary)',
+                    border: 'none',
+                    outline: 'none',
+                    fontWeight: '700',
+                    fontSize: '12px',
+                    cursor: 'pointer',
+                    padding: '4px 6px',
+                  }}
+                >
+                  {availableMonths.map(m => (
+                    <option key={m.key} value={m.key} style={{ backgroundColor: isLight ? '#FFFFFF' : '#0F172A' }}>
+                      {m.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Theme Toggle */}
+              <button
+                onClick={() => setTheme(isLight ? 'dark' : 'light')}
+                style={{
+                  padding: '7px 12px',
+                  fontSize: '12px',
+                  fontWeight: '700',
+                  color: 'var(--text-primary)',
+                  backgroundColor: 'var(--bg-card-sub)',
+                  border: '1px solid var(--border-color)',
+                  borderRadius: '8px',
+                  cursor: 'pointer',
+                }}
+              >
+                {isLight ? '🌙 Dark' : '☀️ Light'}
+              </button>
+            </div>
+          </header>
+
+          {/* REAL TELEMETRY STATUS BANNER */}
+          <div style={{
+            width: '100%',
+            maxWidth: '1320px',
+            backgroundColor: isLight ? '#ECFDF5' : 'rgba(16, 185, 129, 0.08)',
+            border: '1px solid var(--accent-uptime)',
+            borderRadius: '10px',
+            padding: '10px 16px',
+            display: 'flex',
+            flexWrap: 'wrap',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            fontSize: '12px',
+            gap: '10px',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+              <span style={{ fontSize: '16px' }}>⚡</span>
+              <span>
+                <strong style={{ color: 'var(--accent-uptime)' }}>Inverter Database Connected:</strong> Displaying {filteredData.length} recorded days.
+                {deviceInfo?.database && ` • Total Inverter Readings: ${deviceInfo.database.totalInverterReadings?.toLocaleString()}`}
+                {apiBaseUrl && <span style={{ marginLeft: '6px', color: 'var(--text-muted)' }}>via {apiBaseUrl}</span>}
+              </span>
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              {syncMessage && (
+                <span style={{ fontSize: '11px', color: 'var(--accent-uptime)', fontWeight: '700' }}>
+                  {syncMessage}
+                </span>
+              )}
+              <button
+                onClick={handleSyncNow}
+                disabled={isSyncing}
+                style={{
+                  padding: '4px 10px',
+                  fontSize: '11px',
+                  fontWeight: '700',
+                  backgroundColor: 'var(--accent-uptime)',
+                  color: '#FFFFFF',
+                  border: 'none',
+                  borderRadius: '6px',
+                  cursor: isSyncing ? 'wait' : 'pointer',
+                  opacity: isSyncing ? 0.7 : 1,
+                }}
+              >
+                {isSyncing ? '⏳ Syncing...' : '🔄 Sync Telemetry Now'}
+              </button>
+              <button
+                onClick={exportCsv}
+                style={{
+                  padding: '4px 10px',
+                  fontSize: '11px',
+                  fontWeight: '600',
+                  backgroundColor: 'transparent',
+                  color: 'var(--text-secondary)',
+                  border: '1px solid var(--border-color)',
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                }}
+              >
+                📥 Export CSV
+              </button>
+            </div>
+          </div>
+
+          {/* ========================================================================= */}
+          {/* SECTION 1: KPI CARDS & GAUGES                                            */}
+          {/* ========================================================================= */}
+          <section style={{
+            width: '100%',
+            maxWidth: '1320px',
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(290px, 1fr))',
+            gap: '16px',
+          }}>
+            {/* KPI CARD 1: WEEKLY GRID AVAILABILITY GAUGE */}
+            <div style={{
+              backgroundColor: 'var(--bg-card)',
+              border: '1px solid var(--border-color)',
+              borderRadius: '14px',
+              padding: '18px 20px',
+              boxShadow: 'var(--shadow-card)',
+              display: 'flex',
+              flexDirection: 'column',
+              justifyContent: 'space-between',
+            }}>
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontSize: '11px', fontWeight: '800', letterSpacing: '0.04em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>
+                    KPI Gauge • Last 7 Days
+                  </span>
+                  <span style={{
+                    fontSize: '10px',
+                    fontWeight: '700',
+                    color: 'var(--accent-uptime)',
+                    backgroundColor: isLight ? '#ECFDF5' : 'rgba(16, 185, 129, 0.15)',
+                    padding: '2px 6px',
+                    borderRadius: '4px',
+                    fontFamily: 'var(--font-mono)',
+                  }}>
+                    Formula: (Hours / 168h) * 100%
+                  </span>
+                </div>
+                <h3 style={{ fontSize: '15px', fontWeight: '800', color: 'var(--text-primary)', margin: '4px 0 0' }}>
+                  Weekly Grid Availability
+                </h3>
+              </div>
+
+              <WeeklyAvailabilityGauge
+                gridHours7d={weeklyGaugeMetrics.totalGridHours7d}
+                availabilityPct={weeklyGaugeMetrics.availabilityPct}
+                isLight={isLight}
+              />
+
+              <div style={{
+                marginTop: '10px',
+                paddingTop: '10px',
+                borderTop: '1px solid var(--border-color)',
+                fontSize: '11px',
+                color: 'var(--text-muted)',
+                display: 'flex',
+                justifyContent: 'space-between',
+              }}>
+                <span>7-Day Window: <strong>168.0 hrs</strong></span>
+                <span style={{ color: 'var(--accent-outage)' }}>
+                  Total Outage: <strong>{weeklyGaugeMetrics.totalOutageHours7d}h</strong>
+                </span>
+              </div>
+            </div>
+
+            {/* KPI CARD 2: MONTHLY GRID CONSUMPTION */}
+            <div style={{
+              backgroundColor: 'var(--bg-card)',
+              border: '1px solid var(--border-color)',
+              borderRadius: '14px',
+              padding: '18px 20px',
+              boxShadow: 'var(--shadow-card)',
+              display: 'flex',
+              flexDirection: 'column',
+              justifyContent: 'space-between',
+            }}>
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontSize: '11px', fontWeight: '800', letterSpacing: '0.04em', textTransform: 'uppercase', color: 'var(--accent-grid)' }}>
+                    Utility Grid Supply
+                  </span>
+                  <span style={{ fontSize: '18px' }}>⚡</span>
+                </div>
+                <h3 style={{ fontSize: '14px', fontWeight: '700', color: 'var(--text-secondary)', margin: '2px 0 0' }}>
+                  Grid Consumption
+                </h3>
+                <div style={{
+                  fontSize: '28px',
+                  fontWeight: '800',
+                  fontFamily: 'var(--font-mono)',
+                  color: 'var(--text-primary)',
+                  margin: '12px 0 4px',
+                }}>
+                  {monthlyOverview.totalGridKwh.toLocaleString()} <span style={{ fontSize: '15px', color: 'var(--text-muted)' }}>kWh</span>
+                </div>
+                <p style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                  Accounts for <strong>{monthlyOverview.gridSharePct}%</strong> of total energy usage.
+                </p>
+              </div>
+
+              <div style={{ marginTop: '14px' }}>
+                <div style={{
+                  height: '6px',
+                  backgroundColor: isLight ? '#F1F5F9' : '#1E293B',
+                  borderRadius: '3px',
+                  overflow: 'hidden',
+                }}>
+                  <div style={{
+                    height: '100%',
+                    width: `${monthlyOverview.gridSharePct}%`,
+                    backgroundColor: 'var(--accent-grid)',
+                    borderRadius: '3px',
+                  }} />
+                </div>
+                <div style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  marginTop: '8px',
+                  fontSize: '11px',
+                  color: 'var(--text-muted)',
+                }}>
+                  <span>Daily Grid Avg: <strong>{(monthlyOverview.totalGridKwh / (monthlyOverview.daysCount || 1)).toFixed(1)} kWh</strong></span>
+                  <span>Target: &lt;15 kWh/day</span>
+                </div>
+              </div>
+            </div>
+
+            {/* KPI CARD 3: MONTHLY SOLAR CONSUMPTION */}
+            <div style={{
+              backgroundColor: 'var(--bg-card)',
+              border: '1px solid var(--border-color)',
+              borderRadius: '14px',
+              padding: '18px 20px',
+              boxShadow: 'var(--shadow-card)',
+              display: 'flex',
+              flexDirection: 'column',
+              justifyContent: 'space-between',
+            }}>
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontSize: '11px', fontWeight: '800', letterSpacing: '0.04em', textTransform: 'uppercase', color: 'var(--accent-solar)' }}>
+                    Solar PV Self-Consumption
+                  </span>
+                  <span style={{ fontSize: '18px' }}>☀️</span>
+                </div>
+                <h3 style={{ fontSize: '14px', fontWeight: '700', color: 'var(--text-secondary)', margin: '2px 0 0' }}>
+                  Solar Consumption
+                </h3>
+                <div style={{
+                  fontSize: '28px',
+                  fontWeight: '800',
+                  fontFamily: 'var(--font-mono)',
+                  color: 'var(--text-primary)',
+                  margin: '12px 0 4px',
+                }}>
+                  {monthlyOverview.totalSolarKwh.toLocaleString()} <span style={{ fontSize: '15px', color: 'var(--text-muted)' }}>kWh</span>
+                </div>
+                <p style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                  Provides <strong>{monthlyOverview.solarSharePct}%</strong> green solar self-sufficiency.
+                </p>
+              </div>
+
+              <div style={{ marginTop: '14px' }}>
+                <div style={{
+                  height: '6px',
+                  backgroundColor: isLight ? '#F1F5F9' : '#1E293B',
+                  borderRadius: '3px',
+                  overflow: 'hidden',
+                }}>
+                  <div style={{
+                    height: '100%',
+                    width: `${monthlyOverview.solarSharePct}%`,
+                    backgroundColor: 'var(--accent-solar)',
+                    borderRadius: '3px',
+                  }} />
+                </div>
+                <div style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  marginTop: '8px',
+                  fontSize: '11px',
+                  color: 'var(--text-muted)',
+                }}>
+                  <span>Daily Solar Avg: <strong>{(monthlyOverview.totalSolarKwh / (monthlyOverview.daysCount || 1)).toFixed(1)} kWh</strong></span>
+                  <span style={{ color: 'var(--accent-uptime)' }}>🌱 Clean Offset</span>
+                </div>
+              </div>
+            </div>
+
+            {/* KPI CARD 4: MONTHLY TOTAL CONSUMPTION */}
+            <div style={{
+              backgroundColor: 'var(--bg-card)',
+              border: '1px solid var(--border-color)',
+              borderRadius: '14px',
+              padding: '18px 20px',
+              boxShadow: 'var(--shadow-card)',
+              display: 'flex',
+              flexDirection: 'column',
+              justifyContent: 'space-between',
+            }}>
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontSize: '11px', fontWeight: '800', letterSpacing: '0.04em', textTransform: 'uppercase', color: 'var(--accent-total)' }}>
+                    Total Household Demand
+                  </span>
+                  <span style={{
+                    fontSize: '10px',
+                    fontWeight: '700',
+                    color: 'var(--accent-total)',
+                    backgroundColor: isLight ? '#EDE9FE' : 'rgba(139, 92, 246, 0.15)',
+                    padding: '2px 6px',
+                    borderRadius: '4px',
+                  }}>
+                    Total = Grid + Solar
+                  </span>
+                </div>
+                <h3 style={{ fontSize: '14px', fontWeight: '700', color: 'var(--text-secondary)', margin: '2px 0 0' }}>
+                  Total Consumption
+                </h3>
+                <div style={{
+                  fontSize: '28px',
+                  fontWeight: '800',
+                  fontFamily: 'var(--font-mono)',
+                  color: 'var(--text-primary)',
+                  margin: '12px 0 4px',
+                }}>
+                  {monthlyOverview.totalKwh.toLocaleString()} <span style={{ fontSize: '15px', color: 'var(--text-muted)' }}>kWh</span>
+                </div>
+                <p style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                  Combined demand across <strong>{monthlyOverview.daysCount}</strong> recorded days.
+                </p>
+              </div>
+
+              <div style={{
+                marginTop: '14px',
+                padding: '8px 10px',
+                backgroundColor: 'var(--bg-card-sub)',
+                borderRadius: '8px',
+                display: 'flex',
+                justifyContent: 'space-between',
+                fontSize: '11px',
+                fontFamily: 'var(--font-mono)',
+                color: 'var(--text-secondary)',
+              }}>
+                <span>Daily Mean: <strong>{monthlyOverview.avgDailyKwh} kWh</strong></span>
+                <span style={{ color: 'var(--accent-total)' }}>
+                  {monthlyOverview.totalGridKwh} + {monthlyOverview.totalSolarKwh} kWh
+                </span>
+              </div>
+            </div>
+          </section>
+
+          {/* ========================================================================= */}
+          {/* SECTION 2: CHART 1 - DAILY GRID AVAILABILITY HOURS (0 to 24 Hours)        */}
+          {/* ========================================================================= */}
+          <section style={{
+            width: '100%',
+            maxWidth: '1320px',
+            backgroundColor: 'var(--bg-card)',
+            border: '1px solid var(--border-color)',
+            borderRadius: '14px',
+            boxShadow: 'var(--shadow-card)',
+            overflow: 'hidden',
+          }}>
+            {/* Chart 1 Header */}
+            <div style={{
+              display: 'flex',
+              flexWrap: 'wrap',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              padding: '16px 22px',
+              borderBottom: '1px solid var(--border-color)',
+              gap: '12px',
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <div style={{ width: '12px', height: '12px', borderRadius: '3px', backgroundColor: 'var(--accent-uptime)' }} />
+                <div>
+                  <h2 style={{ fontSize: '16px', fontWeight: '800', color: 'var(--text-primary)', margin: 0 }}>
+                    Chart 1: Daily Grid Availability Hours
+                  </h2>
+                </div>
+              </div>
+            </div>
+
+            {/* Interactive Tooltip Readout Sub-bar */}
+            <div style={{
+              minHeight: '40px',
+              padding: '8px 22px',
+              backgroundColor: 'var(--bg-card-sub)',
+              borderBottom: '1px solid var(--border-color)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              fontSize: '12px',
+              color: 'var(--text-secondary)',
+            }}>
+              {hoveredPointChart1 ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
+                  <span style={{ fontWeight: '800', color: 'var(--text-primary)' }}>
+                    📅 {hoveredPointChart1.formattedDate}
+                  </span>
+                  <span>
+                    ⚡ Connected: <strong style={{ color: 'var(--accent-uptime)', fontFamily: 'var(--font-mono)' }}>
+                      {hoveredPointChart1.gridConnectedHours} Hours
+                    </strong>
+                  </span>
+                  <span>
+                    🔴 Outage: <strong style={{ color: 'var(--accent-outage)', fontFamily: 'var(--font-mono)' }}>
+                      {hoveredPointChart1.gridOutageHours} Hours
+                    </strong>
+                  </span>
+                  <span>
+                    Availability: <strong style={{ color: 'var(--accent-uptime)' }}>{hoveredPointChart1.gridAvailabilityPercentage}%</strong>
+                  </span>
+                </div>
+              ) : (
+                <span style={{ color: 'var(--text-muted)' }}>
+                  Hover over any day point or bar to inspect exact daily uptime hours and outage duration.
+                </span>
+              )}
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', fontSize: '11px' }}>
+                <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: 'var(--accent-uptime)' }} />
+                  Connected Hours
+                </span>
+                <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  <span style={{ width: '12px', height: '0px', borderTop: '2px dashed var(--accent-uptime)' }} />
+                  24h Benchmark
+                </span>
+              </div>
+            </div>
+
+            {/* SVG Plot Container for Chart 1 */}
+            <div style={{
+              padding: '24px 20px 20px',
+              overflowX: 'auto',
+            }}>
+              {(() => {
+                const count = filteredData.length;
+                if (count === 0) return <div style={{ padding: '40px', textAlign: 'center', color: 'var(--text-muted)' }}>No data available for this month.</div>;
+                
+                // Generous dynamic width so every single day is legible
+                const plotSvgWidth = Math.max(980, count * 44);
+                const leftMargin = 60;
+                const rightMargin = plotSvgWidth - 30;
+                const plotWidth = rightMargin - leftMargin;
+                const stepX = count > 1 ? plotWidth / (count - 1) : 0;
+                const barWidth = Math.max(10, Math.min(28, (plotWidth / count) * 0.65));
+
+                const getY = (hrs) => 195 - (hrs / 24) * 175;
+
+                const points = filteredData.map((d, i) => ({
+                  x: count > 1 ? leftMargin + i * stepX : leftMargin + plotWidth / 2,
+                  y: getY(d.gridConnectedHours),
+                  data: d,
+                }));
+
+                const linePath = points.reduce((acc, pt, idx) => `${acc} ${idx === 0 ? 'M' : 'L'} ${pt.x},${pt.y}`, '');
+                const areaPath = points.length > 0 ? `${linePath} L ${points[points.length - 1].x},195 L ${points[0].x},195 Z` : '';
+
+                return (
+                  <div style={{ width: `${plotSvgWidth}px`, height: '260px', position: 'relative' }}>
+                    <svg
+                      width={plotSvgWidth}
+                      height="260"
+                      viewBox={`0 0 ${plotSvgWidth} 260`}
+                      style={{ overflow: 'visible' }}
+                    >
+                      <defs>
+                        <linearGradient id="chart1FillGrad" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor="var(--accent-uptime)" stopOpacity="0.35" />
+                          <stop offset="100%" stopColor="var(--accent-uptime)" stopOpacity="0.0" />
+                        </linearGradient>
+                      </defs>
+
+                      {/* Horizontal Gridlines (0 to 24h) */}
+                      {[
+                        { val: 24, y: 20 },
+                        { val: 18, y: 64 },
+                        { val: 12, y: 108 },
+                        { val: 6, y: 151 },
+                        { val: 0, y: 195 },
+                      ].map((tick) => (
+                        <g key={tick.val}>
+                          <line
+                            x1="50"
+                            y1={tick.y}
+                            x2={plotSvgWidth - 20}
+                            y2={tick.y}
+                            stroke={tick.val === 24 ? 'var(--accent-uptime)' : (isLight ? '#E2E8F0' : '#1E293B')}
+                            strokeWidth={tick.val === 24 ? '1.5' : '1'}
+                            strokeDasharray={tick.val === 24 ? '4 4' : 'none'}
+                          />
+                          <text
+                            x="42"
+                            y={tick.y + 4}
+                            textAnchor="end"
+                            fill={tick.val === 24 ? 'var(--accent-uptime)' : 'var(--text-muted)'}
+                            fontFamily="var(--font-mono)"
+                            fontSize="10"
+                            fontWeight={tick.val === 24 ? '700' : '500'}
+                          >
+                            {tick.val}h
+                          </text>
+                        </g>
+                      ))}
+
+                      {/* Line & Points Mode */}
+                      <g>
+                          <path d={areaPath} fill="url(#chart1FillGrad)" />
+                          <path
+                            d={linePath}
+                            fill="none"
+                            stroke="var(--accent-uptime)"
+                            strokeWidth="2.8"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+
+                          {/* Data points & hover catchers for EVERY SINGLE DAY */}
+                          {points.map((pt) => {
+                            const isHovered = hoveredPointChart1?.date === pt.data.date;
+                            return (
+                              <g
+                                key={pt.data.date}
+                                onMouseEnter={() => setHoveredPointChart1(pt.data)}
+                                onMouseLeave={() => setHoveredPointChart1(null)}
+                                style={{ cursor: 'pointer' }}
+                              >
+                                {/* Vertical guideline connecting day to point */}
+                                <line
+                                  x1={pt.x}
+                                  y1={pt.y}
+                                  x2={pt.x}
+                                  y2="195"
+                                  stroke={isHovered ? 'var(--accent-uptime)' : 'var(--border-color)'}
+                                  strokeWidth={isHovered ? '1.5' : '0.75'}
+                                  strokeDasharray="2 2"
+                                />
+
+                                {/* Invisible hit target */}
+                                <circle cx={pt.x} cy={pt.y} r="16" fill="transparent" />
+
+                                {/* Visible circle point */}
+                                <circle
+                                  cx={pt.x}
+                                  cy={pt.y}
+                                  r={isHovered ? '6.5' : '4.5'}
+                                  fill={isHovered ? '#FFFFFF' : 'var(--accent-uptime)'}
+                                  stroke={isHovered ? 'var(--accent-uptime)' : (isLight ? '#FFFFFF' : '#0F172A')}
+                                  strokeWidth="2"
+                                  style={{ transition: 'all 0.15s ease' }}
+                                />
+
+                                {/* Exact Hours Value Label above point */}
+                                <text
+                                  x={pt.x}
+                                  y={Math.max(16, pt.y - 9)}
+                                  textAnchor="middle"
+                                  fill={isHovered ? 'var(--accent-uptime)' : (isLight ? '#334155' : '#94A3B8')}
+                                  fontFamily="var(--font-mono)"
+                                  fontSize="10"
+                                  fontWeight={isHovered ? '800' : '600'}
+                                >
+                                  {pt.data.gridConnectedHours}h
+                                </text>
+
+                                {/* Day label directly under each point */}
+                                <text
+                                  x={pt.x}
+                                  y="218"
+                                  textAnchor="middle"
+                                  fill={isHovered ? 'var(--accent-uptime)' : 'var(--text-primary)'}
+                                  fontFamily="var(--font-mono)"
+                                  fontSize="10"
+                                  fontWeight={isHovered ? '800' : '700'}
+                                >
+                                  {pt.data.dayLabel}
+                                </text>
+                                <text
+                                  x={pt.x}
+                                  y="232"
+                                  textAnchor="middle"
+                                  fill={isHovered ? 'var(--accent-uptime)' : 'var(--text-muted)'}
+                                  fontFamily="var(--font-mono)"
+                                  fontSize="9"
+                                >
+                                  {pt.data.shortDate.split(' ')[0]}
+                                </text>
+                              </g>
+                            );
+                          })}
+                        </g>
+                    </svg>
+                  </div>
+                );
+              })()}
+            </div>
+          </section>
+
+          {/* ========================================================================= */}
+          {/* SECTION 3: CHART 2 - DAILY CONSUMPTION BREAKDOWN & TOTAL (kWh)             */}
+          {/* ========================================================================= */}
+          <section style={{
+            width: '100%',
+            maxWidth: '1320px',
+            backgroundColor: 'var(--bg-card)',
+            border: '1px solid var(--border-color)',
+            borderRadius: '14px',
+            boxShadow: 'var(--shadow-card)',
+            overflow: 'hidden',
+          }}>
+            {/* Chart 2 Header */}
+            <div style={{
+              display: 'flex',
+              flexWrap: 'wrap',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              padding: '16px 22px',
+              borderBottom: '1px solid var(--border-color)',
+              gap: '12px',
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <div style={{ width: '12px', height: '12px', borderRadius: '3px', backgroundColor: 'var(--accent-total)' }} />
+                <div>
+                  <h2 style={{ fontSize: '16px', fontWeight: '800', color: 'var(--text-primary)', margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    Chart 2: Daily Consumption Breakdown & Total
+                    <span style={{
+                      fontSize: '11px',
+                      fontWeight: '700',
+                      color: 'var(--accent-total)',
+                      backgroundColor: 'rgba(139, 92, 246, 0.12)',
+                      padding: '2px 8px',
+                      borderRadius: '4px',
+                    }}>
+                      Grid + Solar + Total Overlay
+                    </span>
+                  </h2>
+                  <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                    X-axis: Day & Date • Y-axis: Energy in kilowatt-hours (kWh)
+                  </span>
+                </div>
+              </div>
+
+              {/* Chart Mode & Legend Toggles */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                {/* Interactive Legend Toggles */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '11px', fontWeight: '700' }}>
+                  <button
+                    onClick={() => toggleSeries('grid')}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '5px',
+                      padding: '4px 8px',
+                      borderRadius: '5px',
+                      backgroundColor: visibleSeries.grid ? (isLight ? '#E0F2FE' : 'rgba(2, 132, 199, 0.15)') : 'transparent',
+                      border: `1px solid ${visibleSeries.grid ? 'var(--accent-grid)' : 'var(--border-color)'}`,
+                      color: visibleSeries.grid ? 'var(--accent-grid)' : 'var(--text-muted)',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <span style={{ width: '8px', height: '8px', borderRadius: '2px', backgroundColor: 'var(--accent-grid)' }} />
+                    Grid (kWh)
+                  </button>
+
+                  <button
+                    onClick={() => toggleSeries('solar')}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '5px',
+                      padding: '4px 8px',
+                      borderRadius: '5px',
+                      backgroundColor: visibleSeries.solar ? (isLight ? '#FEF3C7' : 'rgba(245, 158, 11, 0.15)') : 'transparent',
+                      border: `1px solid ${visibleSeries.solar ? 'var(--accent-solar)' : 'var(--border-color)'}`,
+                      color: visibleSeries.solar ? 'var(--accent-solar)' : 'var(--text-muted)',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <span style={{ width: '8px', height: '8px', borderRadius: '2px', backgroundColor: 'var(--accent-solar)' }} />
+                    Solar (kWh)
+                  </button>
+
+                  <button
+                    onClick={() => toggleSeries('total')}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '5px',
+                      padding: '4px 8px',
+                      borderRadius: '5px',
+                      backgroundColor: visibleSeries.total ? (isLight ? '#EDE9FE' : 'rgba(139, 92, 246, 0.15)') : 'transparent',
+                      border: `1px solid ${visibleSeries.total ? 'var(--accent-total)' : 'var(--border-color)'}`,
+                      color: visibleSeries.total ? 'var(--accent-total)' : 'var(--text-muted)',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <span style={{ width: '12px', height: '2px', backgroundColor: 'var(--accent-total)' }} />
+                    Total Line (kWh)
+                  </button>
+                </div>
+
+                {/* Stacked vs Grouped Toggle */}
+                <div style={{
+                  display: 'flex',
+                  backgroundColor: 'var(--bg-card-sub)',
+                  padding: '3px',
+                  borderRadius: '8px',
+                  border: '1px solid var(--border-color)',
+                }}>
+                  <button
+                    onClick={() => setChart2Mode('stacked')}
+                    style={{
+                      padding: '4px 10px',
+                      fontSize: '11px',
+                      fontWeight: chart2Mode === 'stacked' ? '700' : '500',
+                      color: chart2Mode === 'stacked' ? '#FFFFFF' : 'var(--text-secondary)',
+                      backgroundColor: chart2Mode === 'stacked' ? 'var(--accent-total)' : 'transparent',
+                      border: 'none',
+                      borderRadius: '5px',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Stacked Bars
+                  </button>
+                  <button
+                    onClick={() => setChart2Mode('grouped')}
+                    style={{
+                      padding: '4px 10px',
+                      fontSize: '11px',
+                      fontWeight: chart2Mode === 'grouped' ? '700' : '500',
+                      color: chart2Mode === 'grouped' ? '#FFFFFF' : 'var(--text-secondary)',
+                      backgroundColor: chart2Mode === 'grouped' ? 'var(--accent-total)' : 'transparent',
+                      border: 'none',
+                      borderRadius: '5px',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Grouped Bars
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Readout Sub-bar for Chart 2 */}
+            <div style={{
+              minHeight: '40px',
+              padding: '8px 22px',
+              backgroundColor: 'var(--bg-card-sub)',
+              borderBottom: '1px solid var(--border-color)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              fontSize: '12px',
+              color: 'var(--text-secondary)',
+            }}>
+              {hoveredPointChart2 ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
+                  <span style={{ fontWeight: '800', color: 'var(--text-primary)' }}>
+                    📅 {hoveredPointChart2.formattedDate}
+                  </span>
+                  <span>
+                    ⚡ Grid: <strong style={{ color: 'var(--accent-grid)', fontFamily: 'var(--font-mono)' }}>
+                      {hoveredPointChart2.gridConsumptionKwh} kWh
+                    </strong>
+                  </span>
+                  <span>
+                    ☀️ Solar: <strong style={{ color: 'var(--accent-solar)', fontFamily: 'var(--font-mono)' }}>
+                      {hoveredPointChart2.solarConsumptionKwh} kWh
+                    </strong>
+                  </span>
+                  <span>
+                    Total: <strong style={{ color: 'var(--accent-total)', fontFamily: 'var(--font-mono)' }}>
+                      {hoveredPointChart2.totalConsumptionKwh} kWh
+                    </strong>
+                  </span>
+                  <span style={{
+                    fontSize: '11px',
+                    fontWeight: '700',
+                    color: 'var(--accent-uptime)',
+                    backgroundColor: isLight ? '#ECFDF5' : 'rgba(16, 185, 129, 0.1)',
+                    padding: '1px 6px',
+                    borderRadius: '4px',
+                  }}>
+                    {hoveredPointChart2.totalConsumptionKwh > 0 ? Math.round((hoveredPointChart2.solarConsumptionKwh / hoveredPointChart2.totalConsumptionKwh) * 100) : 0}% Solar Coverage
+                  </span>
+                </div>
+              ) : (
+                <span style={{ color: 'var(--text-muted)' }}>
+                  Hover over any day bar or line node to inspect the exact daily energy breakdown.
+                </span>
+              )}
+
+              <span style={{ fontSize: '11px', fontFamily: 'var(--font-mono)', color: 'var(--text-muted)' }}>
+                Y-AXIS MAX: {chart2MaxY} kWh
+              </span>
+            </div>
+
+            {/* SVG Plot Container for Chart 2 */}
+            <div style={{
+              padding: '24px 20px 20px',
+              overflowX: 'auto',
+            }}>
+              {(() => {
+                const count = filteredData.length;
+                if (count === 0) return null;
+                const plotSvgWidth = Math.max(980, count * 44);
+                const leftMargin = 60;
+                const rightMargin = plotSvgWidth - 30;
+                const plotWidth = rightMargin - leftMargin;
+                const stepX = count > 1 ? plotWidth / (count - 1) : 0;
+                const singleBarWidth = Math.max(8, Math.min(26, (plotWidth / count) * 0.65));
+
+                const getY = (kwh) => 205 - (kwh / chart2MaxY) * 185;
+
+                const totalLinePoints = filteredData.map((d, i) => ({
+                  x: count > 1 ? leftMargin + i * stepX : leftMargin + plotWidth / 2,
+                  y: getY(d.totalConsumptionKwh),
+                  data: d,
+                }));
+
+                const totalLinePath = totalLinePoints.reduce(
+                  (acc, pt, idx) => `${acc} ${idx === 0 ? 'M' : 'L'} ${pt.x},${pt.y}`,
+                  ''
+                );
+
+                return (
+                  <div style={{ width: `${plotSvgWidth}px`, height: '270px', position: 'relative' }}>
+                    <svg
+                      width={plotSvgWidth}
+                      height="270"
+                      viewBox={`0 0 ${plotSvgWidth} 270`}
+                      style={{ overflow: 'visible' }}
+                    >
+                      {/* Horizontal Gridlines */}
+                      {[0, 0.25, 0.5, 0.75, 1.0].map((frac) => {
+                        const yVal = Math.round(chart2MaxY * (1 - frac));
+                        const yPos = 20 + frac * 185;
+                        return (
+                          <g key={frac}>
+                            <line
+                              x1="50"
+                              y1={yPos}
+                              x2={plotSvgWidth - 20}
+                              y2={yPos}
+                              stroke={isLight ? '#E2E8F0' : '#1E293B'}
+                              strokeWidth="1"
+                            />
+                            <text
+                              x="42"
+                              y={yPos + 4}
+                              textAnchor="end"
+                              fill="var(--text-muted)"
+                              fontFamily="var(--font-mono)"
+                              fontSize="10"
+                            >
+                              {yVal}
+                            </text>
+                          </g>
+                        );
+                      })}
+
+                      {/* 1. BARS (Stacked or Grouped) */}
+                      {filteredData.map((d, i) => {
+                        const cx = count > 1 ? leftMargin + i * stepX : leftMargin + plotWidth / 2;
+                        const isHovered = hoveredPointChart2?.date === d.date;
+
+                        if (chart2Mode === 'stacked') {
+                          const solarHeight = (d.solarConsumptionKwh / chart2MaxY) * 185;
+                          const gridHeight = (d.gridConsumptionKwh / chart2MaxY) * 185;
+                          const solarY = 205 - solarHeight;
+                          const gridY = solarY - gridHeight;
+                          const barX = cx - singleBarWidth / 2;
+
+                          return (
+                            <g
+                              key={d.date}
+                              onMouseEnter={() => setHoveredPointChart2(d)}
+                              onMouseLeave={() => setHoveredPointChart2(null)}
+                              style={{ cursor: 'pointer' }}
+                            >
+                              {/* Solar portion (Bottom) */}
+                              {visibleSeries.solar && (
+                                <rect
+                                  x={barX}
+                                  y={solarY}
+                                  width={singleBarWidth}
+                                  height={solarHeight}
+                                  fill="var(--accent-solar)"
+                                  rx={visibleSeries.grid ? 0 : 3}
+                                  opacity={isHovered ? 1 : 0.88}
+                                />
+                              )}
+
+                              {/* Grid portion (Top) */}
+                              {visibleSeries.grid && (
+                                <rect
+                                  x={barX}
+                                  y={gridY}
+                                  width={singleBarWidth}
+                                  height={gridHeight}
+                                  fill="var(--accent-grid)"
+                                  rx="3"
+                                  opacity={isHovered ? 1 : 0.88}
+                                />
+                              )}
+
+                              {/* Day Label */}
+                              <text
+                                x={cx}
+                                y="228"
+                                textAnchor="middle"
+                                fill={isHovered ? 'var(--accent-total)' : 'var(--text-primary)'}
+                                fontFamily="var(--font-mono)"
+                                fontSize="10"
+                                fontWeight={isHovered ? '800' : '700'}
+                              >
+                                {d.dayLabel}
+                              </text>
+                              <text
+                                x={cx}
+                                y="242"
+                                textAnchor="middle"
+                                fill={isHovered ? 'var(--accent-total)' : 'var(--text-muted)'}
+                                fontFamily="var(--font-mono)"
+                                fontSize="9"
+                              >
+                                {d.shortDate.split(' ')[0]}
+                              </text>
+                            </g>
+                          );
+                        } else {
+                          // Grouped mode
+                          const subWidth = singleBarWidth / 2 - 1;
+                          const gridHeight = (d.gridConsumptionKwh / chart2MaxY) * 185;
+                          const solarHeight = (d.solarConsumptionKwh / chart2MaxY) * 185;
+                          const gridX = cx - subWidth - 1;
+                          const solarX = cx + 1;
+                          const gridY = 205 - gridHeight;
+                          const solarY = 205 - solarHeight;
+
+                          return (
+                            <g
+                              key={d.date}
+                              onMouseEnter={() => setHoveredPointChart2(d)}
+                              onMouseLeave={() => setHoveredPointChart2(null)}
+                              style={{ cursor: 'pointer' }}
+                            >
+                              {visibleSeries.grid && (
+                                <rect
+                                  x={gridX}
+                                  y={gridY}
+                                  width={subWidth}
+                                  height={gridHeight}
+                                  fill="var(--accent-grid)"
+                                  rx="2"
+                                  opacity={isHovered ? 1 : 0.88}
+                                />
+                              )}
+
+                              {visibleSeries.solar && (
+                                <rect
+                                  x={solarX}
+                                  y={solarY}
+                                  width={subWidth}
+                                  height={solarHeight}
+                                  fill="var(--accent-solar)"
+                                  rx="2"
+                                  opacity={isHovered ? 1 : 0.88}
+                                />
+                              )}
+
+                              <text
+                                x={cx}
+                                y="228"
+                                textAnchor="middle"
+                                fill={isHovered ? 'var(--accent-total)' : 'var(--text-primary)'}
+                                fontFamily="var(--font-mono)"
+                                fontSize="10"
+                                fontWeight={isHovered ? '800' : '700'}
+                              >
+                                {d.dayLabel}
+                              </text>
+                              <text
+                                x={cx}
+                                y="242"
+                                textAnchor="middle"
+                                fill={isHovered ? 'var(--accent-total)' : 'var(--text-muted)'}
+                                fontFamily="var(--font-mono)"
+                                fontSize="9"
+                              >
+                                {d.shortDate.split(' ')[0]}
+                              </text>
+                            </g>
+                          );
+                        }
+                      })}
+
+                      {/* 2. Total Consumption Line Overlay */}
+                      {visibleSeries.total && (
+                        <g>
+                          <path
+                            d={totalLinePath}
+                            fill="none"
+                            stroke="var(--accent-total)"
+                            strokeWidth="2.8"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                          {totalLinePoints.map((pt) => {
+                            const isHovered = hoveredPointChart2?.date === pt.data.date;
+                            return (
+                              <circle
+                                key={pt.data.date}
+                                cx={pt.x}
+                                cy={pt.y}
+                                r={isHovered ? '5.5' : '3'}
+                                fill="var(--accent-total)"
+                                stroke={isLight ? '#FFFFFF' : '#0F172A'}
+                                strokeWidth="1.5"
+                                style={{ transition: 'all 0.15s ease' }}
+                              />
+                            );
+                          })}
+                        </g>
+                      )}
+                    </svg>
+                  </div>
+                );
+              })()}
+            </div>
+          </section>
+        </div>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<EnergyDashboardApp />);
+  </script>
+</body>
+</html>

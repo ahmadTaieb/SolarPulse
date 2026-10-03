@@ -1,0 +1,43 @@
+@Solar_HostAddress = http://localhost:5031
+
+### Check Ingestion Status and Database Counts
+GET {{Solar_HostAddress}}/api/solar/status
+Accept: application/json
+
+###
+
+### Trigger Immediate Telemetry Sync On-Demand
+POST {{Solar_HostAddress}}/api/solar/sync-now
+Accept: application/json
+
+###
+
+### Get Latest Instantaneous Telemetry Reading
+GET {{Solar_HostAddress}}/api/solar/telemetry/latest
+Accept: application/json
+
+###
+
+### Get Telemetry History for Last 24 Hours
+GET {{Solar_HostAddress}}/api/solar/telemetry/history
+Accept: application/json
+
+###
+
+### Get Consolidated Daily Energy and Grid Uptime Metrics
+GET {{Solar_HostAddress}}/api/solar/metrics/daily
+Accept: application/json
+
+###
+
+### Get Consolidated Monthly Energy and Grid Uptime Metrics
+GET {{Solar_HostAddress}}/api/solar/metrics/monthly
+Accept: application/json
+
+###
+
+### Get Monthly Energy Metrics for a Specific Year
+GET {{Solar_HostAddress}}/api/solar/metrics/monthly?year=2026
+Accept: application/json
+
+###

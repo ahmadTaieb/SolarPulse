@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="Solar.Tests/Solar.Tests.csproj" />
+  <Project Path="Solar/Solar.csproj" />
+</Solution>

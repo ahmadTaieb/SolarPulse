@@ -1,0 +1,44 @@
+## .NET Build & Publish Folders
+[Bb]in/
+[Oo]bj/
+publish/
+dist/
+out/
+
+## Visual Studio & JetBrains & VS Code
+.vs/
+.vscode/
+*.user
+*.userosscache
+*.suo
+*.sln.docstates
+*.ide/
+.idea/
+[Pp]ublish[Pp]rofiles/
+*.pubxml
+*.pubxml.user
+
+## Sensitive & Local Environment Configs
+old_appsettings.txt
+*old_appsettings*
+appsettings.Production.json
+appsettings.*.local.json
+*.local.json
+.env
+.env.*
+secrets.json
+
+## Test Results & Coverage
+TestResults/
+*.trx
+coverage/
+
+## Logs
+*.log
+_logs/
+
+## OS Metadata
+.DS_Store
+Thumbs.db
+ehthumbs.db
+desktop.ini
